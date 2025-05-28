@@ -95,6 +95,47 @@ def create_account(discord_id, discord_username):
         return accounts[discord_id]
     return None
 
+async def find_member(ctx, user_input):
+    """Findet einen Member basierend auf verschiedenen Inputs"""
+    guild = ctx.guild
+    
+    # Versuche verschiedene Methoden
+    member = None
+    
+    # 1. Direkte Mention
+    if isinstance(user_input, discord.Member):
+        return user_input
+    
+    # 2. User ID
+    if user_input.isdigit():
+        try:
+            member = guild.get_member(int(user_input))
+            if member:
+                return member
+        except:
+            pass
+    
+    # 3. Username#discriminator
+    if '#' in user_input:
+        for m in guild.members:
+            if f"{m.name}#{m.discriminator}" == user_input:
+                return m
+    
+    # 4. Display name oder username
+    user_input_lower = user_input.lower()
+    for m in guild.members:
+        if (m.name.lower() == user_input_lower or 
+            m.display_name.lower() == user_input_lower):
+            return m
+    
+    # 5. Teilweise Übereinstimmung
+    for m in guild.members:
+        if (user_input_lower in m.name.lower() or 
+            user_input_lower in m.display_name.lower()):
+            return m
+    
+    return None
+
 @bot.event
 async def on_ready():
     logger.info(f'🚀 Alpha Zentauri Base Bot ist online!')
@@ -206,16 +247,6 @@ async def on_member_update(before, after):
                 await after.send(embed=embed)
                 logger.info(f"📨 Zugangsdaten an {after.name} gesendet")
                 
-                # Bestätigung im Admin-Channel (optional)
-                admin_channel = after.guild.system_channel
-                if admin_channel:
-                    admin_embed = discord.Embed(
-                        title="✅ Account erstellt",
-                        description=f"Account für {after.mention} wurde erstellt und Zugangsdaten gesendet.",
-                        color=0x00ff00
-                    )
-                    await admin_channel.send(embed=admin_embed)
-                    
             except discord.Forbidden:
                 logger.warning(f"❌ Kann keine DM an {after.name} senden")
                 
@@ -261,8 +292,21 @@ async def server_status(ctx):
 
 @bot.command(name='create')
 @commands.has_permissions(administrator=True)
-async def create_account_manual(ctx, member: discord.Member):
+async def create_account_manual(ctx, *, user_input):
     """Erstellt manuell einen Account für einen Benutzer"""
+    # Versuche Member zu finden
+    member = await find_member(ctx, user_input)
+    
+    if not member:
+        embed = discord.Embed(
+            title="❌ Benutzer nicht gefunden",
+            description=f"Konnte keinen Benutzer mit `{user_input}` finden.\n\n**Versuche:**\n• `!azb create @Username` (echte Erwähnung)\n• `!azb create Username`\n• `!azb create 123456789` (User ID)",
+            color=0xff0000
+        )
+        await ctx.send(embed=embed)
+        return
+    
+    # Account erstellen
     account = create_account(str(member.id), f"{member.name}#{member.discriminator}")
     
     if account:
@@ -272,7 +316,7 @@ async def create_account_manual(ctx, member: discord.Member):
             color=0x00ff00
         )
         embed.add_field(
-            name="Zugangsdaten:",
+            name="🔐 Zugangsdaten:",
             value=f"**Username:** `{account['username']}`\n**Passwort:** `{account['password']}`",
             inline=False
         )
@@ -286,11 +330,17 @@ async def create_account_manual(ctx, member: discord.Member):
                 color=0x9932cc
             )
             user_embed.add_field(
-                name="Zugangsdaten:",
+                name="🔐 Zugangsdaten:",
                 value=f"**Benutzername:** `{account['username']}`\n**Passwort:** `{account['password']}`",
                 inline=False
             )
+            user_embed.add_field(
+                name="📋 Server-Verbindung:",
+                value=f"1. **Starte FiveM**\n2. **Drücke F8** und gib ein:\n```connect {SERVER_API.replace('http://', '').replace(':30120', '')}```\n3. **Gib deine Zugangsdaten ein**",
+                inline=False
+            )
             await member.send(embed=user_embed)
+            logger.info(f"📨 Zugangsdaten per DM an {member.name} gesendet")
         except discord.Forbidden:
             await ctx.send(f"⚠️ Konnte {member.mention} keine DM senden.", delete_after=10)
     else:
@@ -303,8 +353,19 @@ async def create_account_manual(ctx, member: discord.Member):
 
 @bot.command(name='reset')
 @commands.has_permissions(administrator=True)
-async def reset_password(ctx, member: discord.Member):
+async def reset_password(ctx, *, user_input):
     """Setzt das Passwort eines Benutzers zurück"""
+    member = await find_member(ctx, user_input)
+    
+    if not member:
+        embed = discord.Embed(
+            title="❌ Benutzer nicht gefunden",
+            description=f"Konnte keinen Benutzer mit `{user_input}` finden.",
+            color=0xff0000
+        )
+        await ctx.send(embed=embed)
+        return
+    
     account = create_account(str(member.id), f"{member.name}#{member.discriminator}")
     
     if account:
@@ -314,7 +375,7 @@ async def reset_password(ctx, member: discord.Member):
             color=0x00ff00
         )
         embed.add_field(
-            name="Neue Zugangsdaten:",
+            name="🔐 Neue Zugangsdaten:",
             value=f"**Username:** `{account['username']}`\n**Passwort:** `{account['password']}`",
             inline=False
         )
@@ -328,7 +389,7 @@ async def reset_password(ctx, member: discord.Member):
                 color=0x9932cc
             )
             user_embed.add_field(
-                name="Neue Zugangsdaten:",
+                name="🔐 Neue Zugangsdaten:",
                 value=f"**Benutzername:** `{account['username']}`\n**Passwort:** `{account['password']}`",
                 inline=False
             )
@@ -404,7 +465,7 @@ async def bot_info(ctx):
     
     await ctx.send(embed=embed)
 
-# Fehlerbehandlung
+# Verbesserte Fehlerbehandlung
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
@@ -414,10 +475,23 @@ async def on_command_error(ctx, error):
             color=0xff0000
         )
         await ctx.send(embed=embed)
+    elif isinstance(error, commands.MissingRequiredArgument):
+        embed = discord.Embed(
+            title="❌ Fehlende Parameter",
+            description=f"**Verwendung:** `{ctx.prefix}{ctx.command.name} <benutzer>`\n\n**Beispiele:**\n• `!azb create @Username`\n• `!azb create Username`\n• `!azb create 123456789`",
+            color=0xff0000
+        )
+        await ctx.send(embed=embed)
     elif isinstance(error, commands.CommandNotFound):
         pass  # Ignoriere unbekannte Befehle
     else:
         logger.error(f"Command-Fehler: {error}")
+        embed = discord.Embed(
+            title="❌ Unbekannter Fehler",
+            description=f"Ein Fehler ist aufgetreten: `{str(error)[:100]}`",
+            color=0xff0000
+        )
+        await ctx.send(embed=embed)
 
 # Bot starten
 if __name__ == "__main__":
