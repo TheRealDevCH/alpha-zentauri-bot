@@ -4,6 +4,9 @@ import requests
 import json
 import os
 import logging
+import random
+import string
+from datetime import datetime
 from discord.ext import commands, tasks
 
 # Logging konfigurieren
@@ -30,6 +33,67 @@ bot = commands.Bot(command_prefix='!azb ', intents=intents, help_command=None)
 
 # Globale Variablen
 server_online = False
+accounts_file = 'accounts.json'
+
+# Account-Verwaltung
+def load_accounts():
+    """Lädt Accounts aus JSON-Datei"""
+    try:
+        if os.path.exists(accounts_file):
+            with open(accounts_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return {}
+    except Exception as e:
+        logger.error(f"Fehler beim Laden der Accounts: {e}")
+        return {}
+
+def save_accounts(accounts):
+    """Speichert Accounts in JSON-Datei"""
+    try:
+        with open(accounts_file, 'w', encoding='utf-8') as f:
+            json.dump(accounts, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        logger.error(f"Fehler beim Speichern der Accounts: {e}")
+        return False
+
+def generate_username():
+    """Generiert einen zufälligen Username"""
+    prefix = "AZB_"
+    suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
+    return prefix + suffix
+
+def generate_password(length=8):
+    """Generiert ein zufälliges Passwort"""
+    characters = string.ascii_letters + string.digits
+    return ''.join(random.choices(characters, k=length))
+
+def create_account(discord_id, discord_username):
+    """Erstellt einen neuen Account"""
+    accounts = load_accounts()
+    
+    # Prüfen ob Account bereits existiert
+    if discord_id in accounts:
+        # Neues Passwort generieren
+        accounts[discord_id]['password'] = generate_password()
+        accounts[discord_id]['last_updated'] = datetime.now().isoformat()
+        logger.info(f"Passwort erneuert für {discord_username}")
+    else:
+        # Neuen Account erstellen
+        accounts[discord_id] = {
+            'username': generate_username(),
+            'password': generate_password(),
+            'discord_username': discord_username,
+            'created_at': datetime.now().isoformat(),
+            'last_updated': datetime.now().isoformat(),
+            'last_login': None
+        }
+        logger.info(f"Neuer Account erstellt für {discord_username}")
+    
+    # Accounts speichern
+    if save_accounts(accounts):
+        return accounts[discord_id]
+    return None
 
 @bot.event
 async def on_ready():
@@ -101,37 +165,71 @@ async def on_member_update(before, after):
     if not had_role and has_role:
         logger.info(f'✅ Rolle hinzugefügt für {after.name}#{after.discriminator}')
         
-        # Willkommensnachricht per DM senden
-        embed = discord.Embed(
-            title="🚀 Willkommen bei Alpha Zentauri Base!",
-            description="Du hast Zugang zu unserem FiveM-Server erhalten!",
-            color=0x9932cc
-        )
+        # Account erstellen
+        account = create_account(str(after.id), f"{after.name}#{after.discriminator}")
         
-        embed.add_field(
-            name="📋 So verbindest du dich:",
-            value=f"1. **Starte FiveM**\n2. **Drücke F8** und gib ein:\n```connect {SERVER_API.replace('http://', '').replace(':30120', '')}```\n3. **Warte auf den Login-Screen**\n4. **Erstelle deinen Charakter**",
-            inline=False
-        )
-        
-        embed.add_field(
-            name="🔗 Wichtige Links:",
-            value="**Discord:** https://discord.gg/pvVDVVK9jc\n**Regeln:** Lies die Serverregeln\n**Support:** Wende dich an die Admins",
-            inline=False
-        )
-        
-        embed.set_footer(text="Alpha Zentauri Base - Dein Premium GTA Roleplay Server")
-        
-        try:
-            await after.send(embed=embed)
-            logger.info(f"📨 Willkommensnachricht an {after.name} gesendet")
-        except discord.Forbidden:
-            logger.warning(f"❌ Kann keine DM an {after.name} senden")
+        if account:
+            # Willkommensnachricht mit Zugangsdaten per DM senden
+            embed = discord.Embed(
+                title="🚀 Willkommen bei Alpha Zentauri Base!",
+                description="Dein Account wurde erfolgreich erstellt!",
+                color=0x9932cc
+            )
             
-            # Fallback: Nachricht im Channel
-            channel = after.guild.system_channel
-            if channel:
-                await channel.send(f"🎉 Willkommen {after.mention}! Ich konnte dir keine DM senden. Bitte aktiviere DMs von Servermitgliedern.")
+            embed.add_field(
+                name="🔐 Deine Zugangsdaten:",
+                value=f"**Benutzername:** `{account['username']}`\n**Passwort:** `{account['password']}`",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="📋 So verbindest du dich:",
+                value=f"1. **Starte FiveM**\n2. **Drücke F8** und gib ein:\n```connect {SERVER_API.replace('http://', '').replace(':30120', '')}```\n3. **Gib deine Zugangsdaten ein**\n4. **Erstelle deinen Charakter**",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="⚠️ Wichtige Hinweise:",
+                value="• **Teile deine Zugangsdaten mit niemandem!**\n• **Screenshot diese Nachricht** für später\n• **Bei Problemen:** Wende dich an die Admins",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="🔗 Wichtige Links:",
+                value="**Discord:** https://discord.gg/pvVDVVK9jc\n**Regeln:** Lies die Serverregeln\n**Support:** Ticket erstellen",
+                inline=False
+            )
+            
+            embed.set_footer(text="Alpha Zentauri Base - Dein Premium GTA Roleplay Server")
+            
+            try:
+                await after.send(embed=embed)
+                logger.info(f"📨 Zugangsdaten an {after.name} gesendet")
+                
+                # Bestätigung im Admin-Channel (optional)
+                admin_channel = after.guild.system_channel
+                if admin_channel:
+                    admin_embed = discord.Embed(
+                        title="✅ Account erstellt",
+                        description=f"Account für {after.mention} wurde erstellt und Zugangsdaten gesendet.",
+                        color=0x00ff00
+                    )
+                    await admin_channel.send(embed=admin_embed)
+                    
+            except discord.Forbidden:
+                logger.warning(f"❌ Kann keine DM an {after.name} senden")
+                
+                # Fallback: Nachricht im Channel
+                channel = after.guild.system_channel
+                if channel:
+                    fallback_embed = discord.Embed(
+                        title="❌ DM fehlgeschlagen",
+                        description=f"Konnte {after.mention} keine DM senden. Bitte aktiviere DMs von Servermitgliedern.",
+                        color=0xff0000
+                    )
+                    await channel.send(embed=fallback_embed)
+        else:
+            logger.error(f"❌ Fehler beim Erstellen des Accounts für {after.name}")
 
 # Commands
 @bot.command(name='status')
@@ -161,39 +259,124 @@ async def server_status(ctx):
         )
         await ctx.send(embed=embed)
 
-@bot.command(name='welcome')
+@bot.command(name='create')
 @commands.has_permissions(administrator=True)
-async def send_welcome_manual(ctx, member: discord.Member):
-    """Sendet manuell eine Willkommensnachricht"""
+async def create_account_manual(ctx, member: discord.Member):
+    """Erstellt manuell einen Account für einen Benutzer"""
+    account = create_account(str(member.id), f"{member.name}#{member.discriminator}")
+    
+    if account:
+        embed = discord.Embed(
+            title="✅ Account erstellt",
+            description=f"Account für {member.mention} wurde erstellt:",
+            color=0x00ff00
+        )
+        embed.add_field(
+            name="Zugangsdaten:",
+            value=f"**Username:** `{account['username']}`\n**Passwort:** `{account['password']}`",
+            inline=False
+        )
+        await ctx.send(embed=embed, delete_after=30)  # Nachricht nach 30s löschen
+        
+        # DM an Benutzer senden
+        try:
+            user_embed = discord.Embed(
+                title="🔐 Deine Zugangsdaten",
+                description="Ein Admin hat dir einen Account erstellt:",
+                color=0x9932cc
+            )
+            user_embed.add_field(
+                name="Zugangsdaten:",
+                value=f"**Benutzername:** `{account['username']}`\n**Passwort:** `{account['password']}`",
+                inline=False
+            )
+            await member.send(embed=user_embed)
+        except discord.Forbidden:
+            await ctx.send(f"⚠️ Konnte {member.mention} keine DM senden.", delete_after=10)
+    else:
+        embed = discord.Embed(
+            title="❌ Fehler",
+            description="Account konnte nicht erstellt werden.",
+            color=0xff0000
+        )
+        await ctx.send(embed=embed)
+
+@bot.command(name='reset')
+@commands.has_permissions(administrator=True)
+async def reset_password(ctx, member: discord.Member):
+    """Setzt das Passwort eines Benutzers zurück"""
+    account = create_account(str(member.id), f"{member.name}#{member.discriminator}")
+    
+    if account:
+        embed = discord.Embed(
+            title="🔄 Passwort zurückgesetzt",
+            description=f"Neues Passwort für {member.mention}:",
+            color=0x00ff00
+        )
+        embed.add_field(
+            name="Neue Zugangsdaten:",
+            value=f"**Username:** `{account['username']}`\n**Passwort:** `{account['password']}`",
+            inline=False
+        )
+        await ctx.send(embed=embed, delete_after=30)
+        
+        # DM an Benutzer
+        try:
+            user_embed = discord.Embed(
+                title="🔄 Passwort zurückgesetzt",
+                description="Dein Passwort wurde zurückgesetzt:",
+                color=0x9932cc
+            )
+            user_embed.add_field(
+                name="Neue Zugangsdaten:",
+                value=f"**Benutzername:** `{account['username']}`\n**Passwort:** `{account['password']}`",
+                inline=False
+            )
+            await member.send(embed=user_embed)
+        except discord.Forbidden:
+            await ctx.send(f"⚠️ Konnte {member.mention} keine DM senden.", delete_after=10)
+
+@bot.command(name='accounts')
+@commands.has_permissions(administrator=True)
+async def list_accounts(ctx):
+    """Zeigt alle erstellten Accounts"""
+    accounts = load_accounts()
+    
+    if not accounts:
+        embed = discord.Embed(
+            title="📋 Account-Liste",
+            description="Keine Accounts vorhanden.",
+            color=0xff0000
+        )
+        await ctx.send(embed=embed)
+        return
+    
     embed = discord.Embed(
-        title="🚀 Willkommen bei Alpha Zentauri Base!",
-        description="Du hast Zugang zu unserem FiveM-Server erhalten!",
+        title="📋 Account-Liste",
+        description=f"Insgesamt {len(accounts)} Accounts:",
         color=0x9932cc
     )
     
-    embed.add_field(
-        name="📋 So verbindest du dich:",
-        value=f"1. **Starte FiveM**\n2. **Drücke F8** und gib ein:\n```connect {SERVER_API.replace('http://', '').replace(':30120', '')}```\n3. **Warte auf den Login-Screen**\n4. **Erstelle deinen Charakter**",
-        inline=False
-    )
+    for discord_id, account in accounts.items():
+        try:
+            user = await bot.fetch_user(int(discord_id))
+            username = f"{user.name}#{user.discriminator}"
+        except:
+            username = account.get('discord_username', 'Unbekannt')
+            
+        embed.add_field(
+            name=f"👤 {username}",
+            value=f"**Login:** `{account['username']}`\n**Erstellt:** {account.get('created_at', 'Unbekannt')[:10]}",
+            inline=True
+        )
     
-    embed.add_field(
-        name="🔗 Wichtige Links:",
-        value="**Discord:** https://discord.gg/pvVDVVK9jc\n**Regeln:** Lies die Serverregeln\n**Support:** Wende dich an die Admins",
-        inline=False
-    )
-    
-    embed.set_footer(text="Alpha Zentauri Base - Dein Premium GTA Roleplay Server")
-    
-    try:
-        await member.send(embed=embed)
-        await ctx.send(f"✅ Willkommensnachricht an {member.mention} gesendet!")
-    except discord.Forbidden:
-        await ctx.send(f"❌ Kann keine DM an {member.mention} senden.")
+    await ctx.send(embed=embed, delete_after=60)
 
 @bot.command(name='info')
 async def bot_info(ctx):
     """Zeigt Bot-Informationen"""
+    accounts = load_accounts()
+    
     embed = discord.Embed(
         title="🤖 Alpha Zentauri Base Bot",
         description="Discord-Bot für das FiveM Login-System",
@@ -202,12 +385,12 @@ async def bot_info(ctx):
     
     embed.add_field(
         name="📊 Status", 
-        value=f"**Latenz:** {round(bot.latency * 1000)}ms\n**Server:** {'🟢 Online' if server_online else '🔴 Offline'}", 
+        value=f"**Latenz:** {round(bot.latency * 1000)}ms\n**Server:** {'🟢 Online' if server_online else '🔴 Offline'}\n**Accounts:** {len(accounts)}", 
         inline=True
     )
     embed.add_field(
         name="📋 Commands", 
-        value="**!azb status** - Server prüfen\n**!azb welcome @user** - Willkommensnachricht\n**!azb info** - Bot-Info", 
+        value="**!azb status** - Server prüfen\n**!azb create @user** - Account erstellen\n**!azb reset @user** - Passwort zurücksetzen\n**!azb accounts** - Account-Liste", 
         inline=True
     )
     
